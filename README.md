@@ -29,10 +29,11 @@ chmod +x setup_phalcon_3.4-4-5.sh
 
 Once the installation is complete, you can access the applications on the following ports:
 
-Phalcon 3.4: http://localhost:8081
-Phalcon 4: http://localhost:8082
-Phalcon 5: http://localhost:8083
-Notes
+- Phalcon 3.4: http://localhost:8081
+- Phalcon 4: http://localhost:8082
+- Phalcon 5: http://localhost:8083
+- 
+###Notes
 Ensure that ports 8081, 8082, and 8083 are free before running the script.
 The script includes Xdebug configuration for local debugging.
 For any issues or queries, please open an issue.
