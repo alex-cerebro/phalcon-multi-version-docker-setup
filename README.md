@@ -1,6 +1,6 @@
 # phalcon-multi-version-docker-setup
 
-This repository contains the necessary scripts to set up a development environment with Phalcon in versions 3.4, 4, and 5 using Docker, Apache, and PHP. The provided setup script allows you to choose which versions of Phalcon you want to install and configures the environment automatically, making it easy to switch between different versions for development and testing purposes.
+This repository contains the necessary scripts to set up a development environment with Phalcon in versions 3.4, 4, and 5 using Docker, Apache, and PHP. The provided setup script allows you to choose which versions of Phalcon you want to install and configures the environment automatically, making it easy to switch between different versions for development and testing purposes. Additionally, the setup includes the Phalcon DevTools master.
 
 ## Requirements
 
