@@ -17,14 +17,13 @@ This repository contains the necessary scripts to set up a development environme
 ```bash
 git clone https://github.com/alex-cerebro/phalcon-multi-version-docker-setup.git
 cd phalcon-multi-version-docker-setup
-
-### Step 2: Create the installation script
-Create a file named setup_phalcon_3.4-4-5.sh and copy the following content into it:
-
+```
 ### Step 3: Assign execution permissions and run the installation script
 
+```bash
 chmod +x setup_phalcon_3.4-4-5.sh
 ./setup_phalcon_3.4-4-5.sh
+```
 
 ###Step 4: Access the applications
 
@@ -37,4 +36,3 @@ Notes
 Ensure that ports 8081, 8082, and 8083 are free before running the script.
 The script includes Xdebug configuration for local debugging.
 For any issues or queries, please open an issue.
-
