@@ -32,38 +32,64 @@ RUN apt-get update && apt-get install -y \
     libfreetype6-dev \
     libonig-dev \
     libzip-dev \
-    && docker-php-ext-configure gd --with-freetype-dir=/usr/include/ --with-jpeg-dir=/usr/include/ \
+    curl
+
+EOF
+
+  if [ "${php_version}" == "7.2" ]; then
+    cat >> phalcon/${version}/Dockerfile <<EOF
+RUN docker-php-ext-configure gd --with-freetype-dir=/usr/include/ --with-jpeg-dir=/usr/include/ \
     && docker-php-ext-install -j\$(nproc) gd mbstring zip \
     && docker-php-ext-install pdo pdo_mysql pdo_pgsql
+EOF
+  else
+    cat >> phalcon/${version}/Dockerfile <<EOF
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j\$(nproc) gd mbstring zip \
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql
+RUN pecl install psr \
+    && docker-php-ext-enable psr
+EOF
+  fi
 
-RUN git clone --branch ${version}.x --depth=1 https://github.com/phalcon/cphalcon.git /tmp/cphalcon \\
-    && cd /tmp/cphalcon/build \\
-    && ./install \\
+  cat >> phalcon/${version}/Dockerfile <<EOF
+
+RUN git clone --branch ${version}.x --depth=1 https://github.com/phalcon/cphalcon.git /tmp/cphalcon \
+    && cd /tmp/cphalcon/build \
+    && ./install \
     && docker-php-ext-enable phalcon
 
-# Install Phalcon DevTools
-RUN git clone https://github.com/phalcon/phalcon-devtools.git /usr/local/phalcon-devtools \\
-    && cd /usr/local/phalcon-devtools \\
-    && git checkout ${devtools_branch}
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-RUN ln -s /usr/local/phalcon-devtools/phalcon /usr/bin/phalcon \\
-    && chmod +x /usr/bin/phalcon
+# Create composer.json for Phalcon DevTools
+RUN mkdir -p /root/.composer && \
+    echo '{"require": {"phalcon/devtools": "${devtools_branch}"}, "minimum-stability": "dev", "prefer-stable": true}' > /root/.composer/composer.json
+
+# Install Phalcon DevTools
+RUN COMPOSER_ALLOW_SUPERUSER=1 composer global install --no-interaction --prefer-dist
+RUN ln -s /root/.composer/vendor/bin/phalcon /usr/bin/phalcon && chmod +x /usr/bin/phalcon
 
 RUN a2enmod rewrite
 RUN sed -i '/<Directory \\/var\\/www\\/>/,/<\\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
 RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
-# Install and configure Xdebug for PHP 7.2
+# Install and configure Xdebug
 EOF
 
   if [ "$php_version" == "7.2" ]; then
     cat >> phalcon/${version}/Dockerfile <<EOF
-RUN pecl install xdebug-2.9.8 \\
+RUN pecl install xdebug-2.9.8 \
+    && docker-php-ext-enable xdebug
+EOF
+  elif [ "$php_version" == "7.4" ]; then
+    cat >> phalcon/${version}/Dockerfile <<EOF
+RUN pecl install xdebug-2.9.8 \
     && docker-php-ext-enable xdebug
 EOF
   else
     cat >> phalcon/${version}/Dockerfile <<EOF
-RUN pecl install xdebug \\
+RUN pecl install xdebug \
     && docker-php-ext-enable xdebug
 EOF
   fi
@@ -71,15 +97,11 @@ EOF
   cat >> phalcon/${version}/Dockerfile <<EOF
 
 # Xdebug configuration for local debugging
-RUN echo "zend_extension=xdebug.so" > /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
-    && echo "xdebug.remote_enable=1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
-    && echo "xdebug.remote_host=172.17.0.1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
-    && echo "xdebug.remote_port=9003" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
-    && echo "xdebug.remote_autostart=1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
-    && echo "xdebug.remote_mode=req" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
-    && echo "xdebug.remote_connect_back=0" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
-    && echo "xdebug.client_host=172.17.0.1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
-    && echo "xdebug.client_port=9003" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\
+RUN echo "zend_extension=xdebug.so" > /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.mode=debug" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.client_host=172.17.0.1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.client_port=9003" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.start_with_request=yes" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
     && echo "xdebug.log=/var/log/xdebug.log" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini
 
 # Install and configure Sockets
@@ -101,26 +123,31 @@ read -p "Please choose an option (1-4): " choice
 versions_to_install=()
 php_versions=()
 devtools_branches=()
+ports=()
 case $choice in
   1)
     versions_to_install=("3.4")
     php_versions=("7.2")
     devtools_branches=("3.4.x")
+    ports=("8081")
     ;;
   2)
     versions_to_install=("4.0")
     php_versions=("7.4")
     devtools_branches=("4.0.x")
+    ports=("8082")
     ;;
   3)
     versions_to_install=("5.0")
     php_versions=("8.0")
     devtools_branches=("5.0.x")
+    ports=("8083")
     ;;
   4)
     versions_to_install=("3.4" "4.0" "5.0")
     php_versions=("7.2" "7.4" "8.0")
     devtools_branches=("3.4.x" "4.0.x" "5.0.x")
+    ports=("8081" "8082" "8083")
     ;;
   *)
     echo "Invalid option. Exiting."
@@ -161,12 +188,13 @@ EOF
 for i in "${!versions_to_install[@]}"; do
   version=${versions_to_install[$i]}
   php_version=${php_versions[$i]}
-  port=$((8081 + $i))
+  port=${ports[$i]}
+  container_name="phalcon${version//./}"
   cat >> docker-compose.yml <<EOF
-  phalcon${version//./}:
+  ${container_name}:
     build:
       context: ./phalcon/${version}
-    container_name: phalcon${version}
+    container_name: ${container_name}
     volumes:
       - ./phalcon/${version}:/var/www/html
     ports:
@@ -178,25 +206,27 @@ done
 
 # Remove existing containers
 for version in "${versions_to_install[@]}"; do
-  sudo docker rm -f phalcon${version} || true
+  container_name="phalcon${version//./}"
+  sudo docker rm -f ${container_name} || true
 done
 
 # Free up ports if they are in use
-for i in "${!versions_to_install[@]}"; do
-  port=$((8081 + i))
+for port in "${ports[@]}"; do
   sudo lsof -t -i :${port} | xargs -r sudo kill
 done
 
 # Build and start the containers
 sudo docker-compose up -d --build
 
-# Verify the containers are running
-for version in "${versions_to_install[@]}"; do
-  container="phalcon${version}"
-  if [ "$(sudo docker inspect -f '{{.State.Running}}' $container)" == "true" ]; then
-    echo "The container $container is running correctly."
+# Verify the containers are running and print URLs
+for i in "${!versions_to_install[@]}"; do
+  version=${versions_to_install[$i]}
+  container_name="phalcon${version//./}"
+  port=${ports[$i]}
+  if [ "$(sudo docker inspect -f '{{.State.Running}}' $container_name)" == "true" ]; then
+    echo "The container $container_name is running correctly. Access it at http://localhost:${port}"
   else
-    echo "There was a problem starting the container $container."
+    echo "There was a problem starting the container $container_name."
   fi
 done
 
@@ -204,7 +234,8 @@ done
 sudo systemctl enable apache2
 sudo systemctl start apache2
 
-# Install Phalcon DevTools globally
-composer global require phalcon/devtools
-
-echo "Installation and configuration completed. Access the applications on the respective ports."
+echo "Installation and configuration completed. Access the applications on the respective ports:"
+for i in "${!versions_to_install[@]}"; do
+  port=${ports[$i]}
+  echo "Phalcon ${versions_to_install[$i]}: http://localhost:${port}"
+done
