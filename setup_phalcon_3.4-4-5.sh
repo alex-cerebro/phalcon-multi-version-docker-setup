@@ -2,6 +2,18 @@
 
 set -e
 
+# Function to install Docker Compose
+install_docker_compose() {
+  if ! command -v docker-compose &> /dev/null; then
+    echo "Docker Compose no encontrado, instalando..."
+    sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
+    echo "Docker Compose instalado correctamente."
+  else
+    echo "Docker Compose ya está instalado."
+  fi
+}
+
 # Function to install a specific version of Phalcon
 install_phalcon_version() {
   version=$1
@@ -159,6 +171,9 @@ esac
 sudo apt-get update
 sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common apache2 php libapache2-mod-php php-curl
 
+# Install Docker Compose if not installed
+install_docker_compose
+
 # Add the GPG key for Docker
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
 
@@ -207,7 +222,9 @@ done
 # Remove existing containers
 for version in "${versions_to_install[@]}"; do
   container_name="phalcon${version//./}"
-  sudo docker rm -f ${container_name} || true
+  if sudo docker ps -a --format '{{.Names}}' | grep -Eq "^${container_name}$"; then
+    sudo docker rm -f ${container_name}
+  fi
 done
 
 # Free up ports if they are in use
