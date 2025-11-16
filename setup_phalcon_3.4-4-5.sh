@@ -2,19 +2,9 @@
 
 set -e
 
-# Function to install Docker Compose
-install_docker_compose() {
-  if ! command -v docker-compose &> /dev/null; then
-    echo "Docker Compose no encontrado, instalando..."
-    sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    sudo chmod +x /usr/local/bin/docker-compose
-    echo "Docker Compose instalado correctamente."
-  else
-    echo "Docker Compose ya está instalado."
-  fi
-}
-
-# Function to install a specific version of Phalcon
+# ------------------------------------------------------------------
+#  Función para crear Dockerfile y estructura de cada versión Phalcon
+# ------------------------------------------------------------------
 install_phalcon_version() {
   version=$1
   php_version=$2
@@ -26,11 +16,16 @@ install_phalcon_version() {
   mkdir -p phalcon/${version}/app/views
   mkdir -p phalcon/${version}/public
 
-  # Create Dockerfile
+  # Crear Dockerfile base
   cat > phalcon/${version}/Dockerfile <<EOF
 FROM php:${php_version}-apache
 
-# Install dependencies and Phalcon
+# Fix para imágenes viejas basadas en Debian buster (repos EOL)
+RUN sed -i 's|deb.debian.org|archive.debian.org|g' /etc/apt/sources.list \
+    && sed -i 's|security.debian.org|archive.debian.org|g' /etc/apt/sources.list \
+    && printf "Acquire::Check-Valid-Until \\"false\\";\\n" > /etc/apt/apt.conf.d/99ignore-release-date || true
+
+# Instalar dependencias y librerías para Phalcon
 RUN apt-get update && apt-get install -y \
     git \
     unzip \
@@ -48,6 +43,7 @@ RUN apt-get update && apt-get install -y \
 
 EOF
 
+  # Extensiones según versión de PHP
   if [ "${php_version}" == "7.2" ]; then
     cat >> phalcon/${version}/Dockerfile <<EOF
 RUN docker-php-ext-configure gd --with-freetype-dir=/usr/include/ --with-jpeg-dir=/usr/include/ \
@@ -64,6 +60,7 @@ RUN pecl install psr \
 EOF
   fi
 
+  # Instalar Phalcon desde cphalcon
   cat >> phalcon/${version}/Dockerfile <<EOF
 
 RUN git clone --branch ${version}.x --depth=1 https://github.com/phalcon/cphalcon.git /tmp/cphalcon \
@@ -71,30 +68,27 @@ RUN git clone --branch ${version}.x --depth=1 https://github.com/phalcon/cphalco
     && ./install \
     && docker-php-ext-enable phalcon
 
-# Install Composer
+# Instalar Composer dentro del contenedor
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-# Create composer.json for Phalcon DevTools
+# composer.json para DevTools
 RUN mkdir -p /root/.composer && \
     echo '{"require": {"phalcon/devtools": "${devtools_branch}"}, "minimum-stability": "dev", "prefer-stable": true}' > /root/.composer/composer.json
 
-# Install Phalcon DevTools
+# Instalar Phalcon DevTools
 RUN COMPOSER_ALLOW_SUPERUSER=1 composer global install --no-interaction --prefer-dist
 RUN ln -s /root/.composer/vendor/bin/phalcon /usr/bin/phalcon && chmod +x /usr/bin/phalcon
 
+# Configuración de Apache
 RUN a2enmod rewrite
 RUN sed -i '/<Directory \\/var\\/www\\/>/,/<\\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
 RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
-# Install and configure Xdebug
+# Instalar y configurar Xdebug
 EOF
 
-  if [ "$php_version" == "7.2" ]; then
-    cat >> phalcon/${version}/Dockerfile <<EOF
-RUN pecl install xdebug-2.9.8 \
-    && docker-php-ext-enable xdebug
-EOF
-  elif [ "$php_version" == "7.4" ]; then
+  # Xdebug según versión de PHP
+  if [ "$php_version" == "7.2" ] || [ "$php_version" == "7.4" ]; then
     cat >> phalcon/${version}/Dockerfile <<EOF
 RUN pecl install xdebug-2.9.8 \
     && docker-php-ext-enable xdebug
@@ -106,9 +100,9 @@ RUN pecl install xdebug \
 EOF
   fi
 
+  # Configuración Xdebug (modo remoto clásico)
   cat >> phalcon/${version}/Dockerfile <<EOF
 
-# Xdebug configuration for Xdebug 2.9.8 (PHP 7.2 compatible)
 RUN echo "zend_extension=xdebug.so" > /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
     && echo "xdebug.remote_enable=1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
     && echo "xdebug.remote_autostart=1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
@@ -117,14 +111,16 @@ RUN echo "zend_extension=xdebug.so" > /usr/local/etc/php/conf.d/docker-php-ext-x
     && echo "xdebug.remote_mode=req" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
     && echo "xdebug.idekey=VSCODE" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini
 
-# Install and configure Sockets
+# Instalar sockets
 RUN docker-php-ext-install sockets
 
 WORKDIR /var/www/html
 EOF
 }
 
-# Ask the user which Phalcon versions to install
+# --------------------------------------------------------
+#  Menú: qué versiones de Phalcon quieres levantar
+# --------------------------------------------------------
 echo "Which Phalcon versions do you want to install?"
 echo "1) Phalcon 3.4"
 echo "2) Phalcon 4"
@@ -132,11 +128,11 @@ echo "3) Phalcon 5"
 echo "4) All"
 read -p "Please choose an option (1-4): " choice
 
-# Process the user's choice
 versions_to_install=()
 php_versions=()
 devtools_branches=()
 ports=()
+
 case $choice in
   1)
     versions_to_install=("3.4")
@@ -168,33 +164,49 @@ case $choice in
     ;;
 esac
 
-# Update the system and install Docker, Apache2, and PHP
+# --------------------------------------------------------
+#  Instalar paquetes base: Apache, PHP, MySQL en el host
+# --------------------------------------------------------
 sudo apt-get update
-sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common apache2 php libapache2-mod-php php-curl
+sudo apt-get install -y \
+  apt-transport-https ca-certificates curl software-properties-common \
+  apache2 php libapache2-mod-php php-curl \
+  mysql-server php-mysql
 
-# Install Docker Compose if not installed
-install_docker_compose
+# Habilitar y arrancar MySQL
+sudo systemctl enable mysql
+sudo systemctl start mysql
 
-# Add the GPG key for Docker
+# --------------------------------------------------------
+#  Instalar Docker + plugin oficial docker compose
+# --------------------------------------------------------
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
 
-# Add the Docker repository
-sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+sudo add-apt-repository \
+  "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable"
 
-# Install Docker
 sudo apt-get update
-sudo apt-get install -y docker-ce
+sudo apt-get install -y \
+  docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
 
-# Install Composer
+# --------------------------------------------------------
+#  Instalar Composer en el host
+# --------------------------------------------------------
 curl -sS https://getcomposer.org/installer | php
 sudo mv composer.phar /usr/local/bin/composer
 
-# Create directories for Dockerfiles and applications
+# --------------------------------------------------------
+#  Crear Dockerfiles para cada versión elegida
+# --------------------------------------------------------
 for i in "${!versions_to_install[@]}"; do
   install_phalcon_version "${versions_to_install[$i]}" "${php_versions[$i]}" "${devtools_branches[$i]}"
 done
 
-# Create a docker-compose.yml file
+# --------------------------------------------------------
+#  Crear docker-compose.yml
+# --------------------------------------------------------
 cat > docker-compose.yml <<EOF
 version: '3.7'
 
@@ -203,7 +215,6 @@ EOF
 
 for i in "${!versions_to_install[@]}"; do
   version=${versions_to_install[$i]}
-  php_version=${php_versions[$i]}
   port=${ports[$i]}
   container_name="phalcon${version//./}"
   cat >> docker-compose.yml <<EOF
@@ -217,10 +228,13 @@ for i in "${!versions_to_install[@]}"; do
       - "${port}:80"
     environment:
       - PHALCON_VERSION=${version}
+
 EOF
 done
 
-# Remove existing containers
+# --------------------------------------------------------
+#  Limpiar contenedores anteriores con mismos nombres
+# --------------------------------------------------------
 for version in "${versions_to_install[@]}"; do
   container_name="phalcon${version//./}"
   if sudo docker ps -a --format '{{.Names}}' | grep -Eq "^${container_name}$"; then
@@ -228,32 +242,44 @@ for version in "${versions_to_install[@]}"; do
   fi
 done
 
-# Free up ports if they are in use
+# --------------------------------------------------------
+#  Liberar puertos si estuvieran en uso
+# --------------------------------------------------------
 for port in "${ports[@]}"; do
   sudo lsof -t -i :${port} | xargs -r sudo kill
 done
 
-# Build and start the containers
-sudo docker-compose up -d --build
+# --------------------------------------------------------
+#  Build + levantar contenedores (docker compose plugin)
+# --------------------------------------------------------
+sudo docker compose up -d --build
 
-# Verify the containers are running and print URLs
+# --------------------------------------------------------
+#  Verificar que los contenedores estén arriba
+# --------------------------------------------------------
 for i in "${!versions_to_install[@]}"; do
   version=${versions_to_install[$i]}
   container_name="phalcon${version//./}"
   port=${ports[$i]}
   if [ "$(sudo docker inspect -f '{{.State.Running}}' $container_name)" == "true" ]; then
-    echo "The container $container_name is running correctly. Access it at http://localhost:${port}"
+    echo "The container $container_name is running correctly. Access it at: http://localhost:${port}"
   else
     echo "There was a problem starting the container $container_name."
   fi
 done
 
-# Enable and start Apache2
+# --------------------------------------------------------
+#  Habilitar y levantar Apache del host (por si lo usas)
+# --------------------------------------------------------
 sudo systemctl enable apache2
 sudo systemctl start apache2
 
-echo "Installation and configuration completed. Access the applications on the respective ports:"
+echo "-----------------------------------------------------"
+echo "Installation and configuration completed."
+echo "Access the applications on these URLs:"
 for i in "${!versions_to_install[@]}"; do
   port=${ports[$i]}
-  echo "Phalcon ${versions_to_install[$i]}: http://localhost:${port}"
+  echo "  Phalcon ${versions_to_install[$i]}: http://localhost:${port}"
 done
+echo "MySQL está instalado y corriendo en el host (localhost, puerto 3306)."
+echo "-----------------------------------------------------"
